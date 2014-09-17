@@ -5,4 +5,5 @@ Directory of BLD patches, where all the patches will be kept as single patch for
 
 Directories:
 
-systrace - Contains output files from running systrace (using 'sched' & 'idle' options) for comparison with CFS.
+backports - Backports of the latest BLD patches  
+systrace - Output files from running systrace (using 'sched' & 'idle' options) for comparison with CFS.
