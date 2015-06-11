@@ -8,23 +8,25 @@ A breakdown of the initial backport commits can be found here:
 https://github.com/SyNtheticNightmar3/android_kernel_samsung_d2/tree/bld
 Feel free to use the commits included as a reference for porting!
 
+* Update to BLD-3.16: Fix for CONFIG_BLD=n.
+
 http://rk-devel.blogspot.com/2012/02/barbershop-load-distribution-algorithm.html
 From: https://github.com/rmullick/bld-patches
 
 Signed-off-by: Rakib Mullick <rakib.mullick@gmail.com>
-Signed-off-by: Luis Cruz <ljc2491@gmail.com>
+Signed-off-by: Luis Cruz <SyNtheticNightmar3@users.noreply.github.com>
 ---
- init/Kconfig         |    9 +++
- kernel/sched/bld.h   |  207 ++++++++++++++++++++++++++++++++++++++++++++++++++
- kernel/sched/core.c  |   46 ++++++++++-
- kernel/sched/fair.c  |   19 ++++-
- kernel/sched/rt.c    |    4 +
- kernel/sched/sched.h |   13 +++-
+ init/Kconfig         |   9 +++
+ kernel/sched/bld.h   | 207 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ kernel/sched/core.c  |  46 +++++++++++-
+ kernel/sched/fair.c  |  19 ++++-
+ kernel/sched/rt.c    |   4 +
+ kernel/sched/sched.h |  13 +++-
  6 files changed, 289 insertions(+), 9 deletions(-)
  create mode 100644 kernel/sched/bld.h
 
 diff --git a/init/Kconfig b/init/Kconfig
-index b2126bc..d861569 100644
+index e4b67a1..11fc18d 100644
 --- a/init/Kconfig
 +++ b/init/Kconfig
 @@ -68,6 +68,15 @@ config BROKEN_ON_SMP
@@ -248,16 +250,16 @@ index 0000000..d4f96a4
 +	}
 +}
 +#else
-+static inline void bld_track_load_activate(struct rq *rq)
++static inline void bld_track_load_activate(struct rq *rq, struct task_struct *p)
 +{
 +}
 +
-+static inline void bld_track_load_deactivate(struct rq *rq)
++static inline void bld_track_load_deactivate(struct rq *rq, struct task_struct *p)
 +{
 +}
 +#endif /* CONFIG_BLD */
 diff --git a/kernel/sched/core.c b/kernel/sched/core.c
-index ed649b7..7989e75 100644
+index 69057f3..5018ae2 100644
 --- a/kernel/sched/core.c
 +++ b/kernel/sched/core.c
 @@ -24,6 +24,8 @@
@@ -269,7 +271,7 @@ index ed649b7..7989e75 100644
   */
  
  #include <linux/mm.h>
-@@ -87,6 +89,7 @@
+@@ -83,6 +85,7 @@
  
  #include "sched.h"
  #include "../workqueue_sched.h"
@@ -277,7 +279,7 @@ index ed649b7..7989e75 100644
  
  #define CREATE_TRACE_POINTS
  #include <trace/events/sched.h>
-@@ -741,6 +744,7 @@ static void enqueue_task(struct rq *rq, struct task_struct *p, int flags)
+@@ -727,6 +730,7 @@ static void enqueue_task(struct rq *rq, struct task_struct *p, int flags)
  	update_rq_clock(rq);
  	sched_info_queued(p);
  	p->sched_class->enqueue_task(rq, p, flags);
@@ -285,7 +287,7 @@ index ed649b7..7989e75 100644
  }
  
  static void dequeue_task(struct rq *rq, struct task_struct *p, int flags)
-@@ -748,6 +752,7 @@ static void dequeue_task(struct rq *rq, struct task_struct *p, int flags)
+@@ -734,6 +738,7 @@ static void dequeue_task(struct rq *rq, struct task_struct *p, int flags)
  	update_rq_clock(rq);
  	sched_info_dequeued(p);
  	p->sched_class->dequeue_task(rq, p, flags);
@@ -293,7 +295,7 @@ index ed649b7..7989e75 100644
  }
  
  void activate_task(struct rq *rq, struct task_struct *p, int flags)
-@@ -1353,8 +1358,12 @@ out:
+@@ -1339,8 +1344,12 @@ out:
  static inline
  int select_task_rq(struct task_struct *p, int sd_flags, int wake_flags)
  {
@@ -308,7 +310,7 @@ index ed649b7..7989e75 100644
  	/*
  	 * In order not to call set_task_cpu() on a blocking task we need
  	 * to rely on ttwu() to place the task on a valid ->cpus_allowed
-@@ -1509,7 +1518,11 @@ static void sched_ttwu_pending(void)
+@@ -1495,7 +1504,11 @@ static void sched_ttwu_pending(void)
  
  void scheduler_ipi(void)
  {
@@ -320,7 +322,7 @@ index ed649b7..7989e75 100644
  		return;
  
  	/*
-@@ -1531,18 +1544,22 @@ void scheduler_ipi(void)
+@@ -1517,18 +1530,22 @@ void scheduler_ipi(void)
  	/*
  	 * Check if someone kicked us for doing the nohz idle load balance.
  	 */
@@ -343,7 +345,7 @@ index ed649b7..7989e75 100644
  
  #ifdef __ARCH_WANT_INTERRUPTS_ON_CTXSW
  static int ttwu_activate_remote(struct task_struct *p, int wake_flags)
-@@ -1573,7 +1590,7 @@ static void ttwu_queue(struct task_struct *p, int cpu)
+@@ -1559,7 +1576,7 @@ static void ttwu_queue(struct task_struct *p, int cpu)
  {
  	struct rq *rq = cpu_rq(cpu);
  
@@ -352,7 +354,7 @@ index ed649b7..7989e75 100644
  	if (sched_feat(TTWU_QUEUE) && !cpus_share_cache(smp_processor_id(), cpu)) {
  		sched_clock_cpu(cpu); /* sync clocks x-cpu */
  		ttwu_queue_remote(p, cpu);
-@@ -1817,7 +1834,7 @@ void sched_fork(struct task_struct *p)
+@@ -1798,7 +1815,7 @@ void sched_fork(struct task_struct *p)
  	 * Silence PROVE_RCU.
  	 */
  	raw_spin_lock_irqsave(&p->pi_lock, flags);
@@ -361,7 +363,7 @@ index ed649b7..7989e75 100644
  	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
  
  #if defined(CONFIG_SCHEDSTATS) || defined(CONFIG_TASK_DELAY_ACCT)
-@@ -2772,7 +2789,11 @@ void sched_exec(void)
+@@ -2562,7 +2579,11 @@ void sched_exec(void)
  	int dest_cpu;
  
  	raw_spin_lock_irqsave(&p->pi_lock, flags);
@@ -373,7 +375,7 @@ index ed649b7..7989e75 100644
  	if (dest_cpu == smp_processor_id())
  		goto unlock;
  
-@@ -3266,8 +3287,10 @@ void scheduler_tick(void)
+@@ -3050,8 +3071,10 @@ void scheduler_tick(void)
  
  #ifdef CONFIG_SMP
  	rq->idle_balance = idle_cpu(cpu);
@@ -384,7 +386,7 @@ index ed649b7..7989e75 100644
  }
  
  notrace unsigned long get_parent_ip(unsigned long addr)
-@@ -3451,8 +3474,10 @@ need_resched:
+@@ -3235,8 +3258,10 @@ need_resched:
  
  	pre_schedule(rq, prev);
  
@@ -395,7 +397,7 @@ index ed649b7..7989e75 100644
  
  	put_prev_task(rq, prev);
  	next = pick_next_task(rq);
-@@ -7336,6 +7361,15 @@ void __init sched_init(void)
+@@ -7072,6 +7097,15 @@ void __init sched_init(void)
  #endif
  		init_rq_hrtick(rq);
  		atomic_set(&rq->nr_iowait, 0);
@@ -411,7 +413,7 @@ index ed649b7..7989e75 100644
  	}
  
  	set_load_weight(&init_task);
-@@ -7378,6 +7412,10 @@ void __init sched_init(void)
+@@ -7114,6 +7148,10 @@ void __init sched_init(void)
  	init_sched_fair_class();
  
  	scheduler_running = 1;
@@ -423,10 +425,10 @@ index ed649b7..7989e75 100644
  
  #ifdef CONFIG_DEBUG_ATOMIC_SLEEP
 diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
-index 68f9086..93ba60f 100644
+index fc60d5b..266d710 100644
 --- a/kernel/sched/fair.c
 +++ b/kernel/sched/fair.c
-@@ -2378,6 +2378,7 @@ static void task_waking_fair(struct task_struct *p)
+@@ -2353,6 +2353,7 @@ static void task_waking_fair(struct task_struct *p)
  	se->vruntime -= min_vruntime;
  }
  
@@ -434,7 +436,7 @@ index 68f9086..93ba60f 100644
  #ifdef CONFIG_FAIR_GROUP_SCHED
  /*
   * effective_load() calculates the load change as seen from the root_task_group
-@@ -2832,9 +2833,9 @@ select_task_rq_fair(struct task_struct *p, int sd_flag, int wake_flags)
+@@ -2809,9 +2810,9 @@ select_task_rq_fair(struct task_struct *p, int sd_flag, int wake_flags)
  	}
  unlock:
  	rcu_read_unlock();
@@ -445,7 +447,7 @@ index 68f9086..93ba60f 100644
  #endif /* CONFIG_SMP */
  
  static unsigned long
-@@ -4747,6 +4748,7 @@ out_unlock:
+@@ -4713,6 +4714,7 @@ out_unlock:
   *   needed, they will kick the idle load balancer, which then does idle
   *   load balancing for all the idle CPUs.
   */
@@ -453,7 +455,7 @@ index 68f9086..93ba60f 100644
  static struct {
  	cpumask_var_t idle_cpus_mask;
  	atomic_t nr_cpus;
-@@ -4903,6 +4905,7 @@ static inline void set_cpu_sd_state_busy(void)
+@@ -4869,6 +4871,7 @@ static inline void set_cpu_sd_state_busy(void)
  		atomic_inc(&sd->groups->sgp->nr_busy_cpus);
  	rcu_read_unlock();
  }
@@ -461,7 +463,7 @@ index 68f9086..93ba60f 100644
  
  void set_cpu_sd_state_idle(void)
  {
-@@ -4919,6 +4922,7 @@ void set_cpu_sd_state_idle(void)
+@@ -4885,6 +4888,7 @@ void set_cpu_sd_state_idle(void)
  	rcu_read_unlock();
  }
  
@@ -469,7 +471,7 @@ index 68f9086..93ba60f 100644
  /*
   * This routine will record that this cpu is going idle with tick stopped.
   * This info will be used in performing idle load balancing in the future.
-@@ -4955,10 +4959,11 @@ static int __cpuinit sched_ilb_notifier(struct notifier_block *nfb,
+@@ -4921,10 +4925,11 @@ static int __cpuinit sched_ilb_notifier(struct notifier_block *nfb,
  		return NOTIFY_DONE;
  	}
  }
@@ -483,7 +485,7 @@ index 68f9086..93ba60f 100644
  /*
   * Scale the max load_balance interval with the number of CPUs in the system.
   * This trades load-balance latency on larger machines for less cross talk.
-@@ -4968,6 +4973,9 @@ void update_max_interval(void)
+@@ -4934,6 +4939,9 @@ void update_max_interval(void)
  	max_load_balance_interval = HZ*num_online_cpus()/10;
  }
  
@@ -493,7 +495,7 @@ index 68f9086..93ba60f 100644
  /*
   * It checks each scheduling domain to see if it is due to be balanced,
   * and initiates a balancing operation if so.
-@@ -5193,6 +5201,7 @@ void trigger_load_balance(struct rq *rq, int cpu)
+@@ -5159,6 +5167,7 @@ void trigger_load_balance(struct rq *rq, int cpu)
  		nohz_balancer_kick(cpu);
  #endif
  }
@@ -501,7 +503,7 @@ index 68f9086..93ba60f 100644
  
  static void rq_online_fair(struct rq *rq)
  {
-@@ -5590,7 +5599,9 @@ const struct sched_class fair_sched_class = {
+@@ -5548,7 +5557,9 @@ const struct sched_class fair_sched_class = {
  	.put_prev_task		= put_prev_task_fair,
  
  #ifdef CONFIG_SMP
@@ -511,7 +513,7 @@ index 68f9086..93ba60f 100644
  
  	.rq_online		= rq_online_fair,
  	.rq_offline		= rq_offline_fair,
-@@ -5628,6 +5639,7 @@ void print_cfs_stats(struct seq_file *m, int cpu)
+@@ -5586,6 +5597,7 @@ void print_cfs_stats(struct seq_file *m, int cpu)
  __init void init_sched_fair_class(void)
  {
  #ifdef CONFIG_SMP
@@ -519,7 +521,7 @@ index 68f9086..93ba60f 100644
  	open_softirq(SCHED_SOFTIRQ, run_rebalance_domains);
  
  #ifdef CONFIG_NO_HZ
-@@ -5635,6 +5647,7 @@ __init void init_sched_fair_class(void)
+@@ -5593,6 +5605,7 @@ __init void init_sched_fair_class(void)
  	zalloc_cpumask_var(&nohz.idle_cpus_mask, GFP_NOWAIT);
  	cpu_notifier(sched_ilb_notifier, 0);
  #endif
@@ -528,10 +530,10 @@ index 68f9086..93ba60f 100644
  
  }
 diff --git a/kernel/sched/rt.c b/kernel/sched/rt.c
-index 526c77d..67b54c8 100644
+index 8f32475..69f4f8d 100644
 --- a/kernel/sched/rt.c
 +++ b/kernel/sched/rt.c
-@@ -1244,6 +1244,7 @@ static void yield_task_rt(struct rq *rq)
+@@ -1216,6 +1216,7 @@ static void yield_task_rt(struct rq *rq)
  #ifdef CONFIG_SMP
  static int find_lowest_rq(struct task_struct *task);
  
@@ -539,7 +541,7 @@ index 526c77d..67b54c8 100644
  static int
  select_task_rq_rt(struct task_struct *p, int sd_flag, int flags)
  {
-@@ -1301,6 +1302,7 @@ select_task_rq_rt(struct task_struct *p, int sd_flag, int flags)
+@@ -1273,6 +1274,7 @@ select_task_rq_rt(struct task_struct *p, int sd_flag, int flags)
  out:
  	return cpu;
  }
@@ -547,7 +549,7 @@ index 526c77d..67b54c8 100644
  
  static void check_preempt_equal_prio(struct rq *rq, struct task_struct *p)
  {
-@@ -2079,7 +2081,9 @@ const struct sched_class rt_sched_class = {
+@@ -2047,7 +2049,9 @@ const struct sched_class rt_sched_class = {
  	.put_prev_task		= put_prev_task_rt,
  
  #ifdef CONFIG_SMP
@@ -558,7 +560,7 @@ index 526c77d..67b54c8 100644
  	.set_cpus_allowed       = set_cpus_allowed_rt,
  	.rq_online              = rq_online_rt,
 diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
-index 008194f..9f2c916 100644
+index 7d22714..278a076 100644
 --- a/kernel/sched/sched.h
 +++ b/kernel/sched/sched.h
 @@ -224,8 +224,8 @@ struct cfs_rq {
@@ -603,5 +605,5 @@ index 008194f..9f2c916 100644
  
  #ifdef CONFIG_SMP
 -- 
-1.7.10.4
+2.4.2
 
