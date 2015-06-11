@@ -8,7 +8,9 @@ A breakdown of the initial backport commits can be found here:
 https://github.com/SyNtheticNightmar3/android_kernel_samsung_d2/tree/bld
 Feel free to use the commits included as a reference for porting!
 
-* Update to BLD-3.16: Fix for CONFIG_BLD=n.
+* Update to BLD-3.17: Fix for CONFIG_BLD=n.
+* Update to BLD-3.18: address issue at the time of wakeup of
+  rt tasks, it was reported by Peter Junos <petoju@gmail.com>.
 
 http://rk-devel.blogspot.com/2012/02/barbershop-load-distribution-algorithm.html
 From: https://github.com/rmullick/bld-patches
@@ -17,12 +19,12 @@ Signed-off-by: Rakib Mullick <rakib.mullick@gmail.com>
 Signed-off-by: Luis Cruz <SyNtheticNightmar3@users.noreply.github.com>
 ---
  init/Kconfig         |   9 +++
- kernel/sched/bld.h   | 207 +++++++++++++++++++++++++++++++++++++++++++++++++++
- kernel/sched/core.c  |  46 +++++++++++-
+ kernel/sched/bld.h   | 215 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ kernel/sched/core.c  |  46 ++++++++++-
  kernel/sched/fair.c  |  19 ++++-
  kernel/sched/rt.c    |   4 +
  kernel/sched/sched.h |  13 +++-
- 6 files changed, 289 insertions(+), 9 deletions(-)
+ 6 files changed, 297 insertions(+), 9 deletions(-)
  create mode 100644 kernel/sched/bld.h
 
 diff --git a/init/Kconfig b/init/Kconfig
@@ -47,10 +49,10 @@ index e4b67a1..11fc18d 100644
  	default 32 if !UML
 diff --git a/kernel/sched/bld.h b/kernel/sched/bld.h
 new file mode 100644
-index 0000000..d4f96a4
+index 0000000..32645e9
 --- /dev/null
 +++ b/kernel/sched/bld.h
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,215 @@
 +#ifdef CONFIG_BLD
 +
 +static DEFINE_RWLOCK(rt_list_lock);
@@ -85,26 +87,34 @@ index 0000000..d4f96a4
 +static int select_cpu_for_wakeup(int task_type, struct cpumask *mask)
 +{
 +	int cpu = smp_processor_id(), i;
-+	unsigned long load, min_load = ULONG_MAX;
++	unsigned long load, varload;
 +	struct rq *rq;
 +
 +	if (task_type) {
++		varload = ULONG_MAX;
 +		for_each_cpu(i, mask) {
 +			rq = cpu_rq(i);
 +			load = rq->cfs.load.weight;
-+			if (load < min_load) {
-+				min_load = load;
++			if (load < varload) {
++				varload = load;
 +				cpu = i;
 +			}
 +		}
 +	} else {
-+		min_load = -1;
++		/* Here's an attempt to get a CPU within the mask where
++		 * we can preempt easily. To achieve this we tried to
++		 * maintain a lowbit, which indicate the lowest bit set on
++		 * array bitmap. Since all CPUs contains high priority
++		 * kernel threads therefore we eliminate 0, so it might not
++		 * be right every time, but it's just an indicator.
++		 */
++		varload = 1;
 +
 +		for_each_cpu(i, mask) {
 +			rq = cpu_rq(i);
 +			load = rq->rt.lowbit;
-+			if (load > min_load) {
-+				min_load = load;
++			if (load > varload) {
++				varload = load;
 +				cpu = i;
 +			}
 +		}
@@ -183,8 +193,8 @@ index 0000000..d4f96a4
 +	firstbit = sched_find_first_bit(array->bitmap);
 +
 +	/* Maintaining rt.lowbit */
-+	if (firstbit <= rq->rt.lowbit)
-+		rq->rt.lowbit = p->prio;
++	if (firstbit > 0 && firstbit <= rq->rt.lowbit)
++		rq->rt.lowbit = firstbit;
 +
 +	if (rq->rt.lowbit < first->lowbit) {
 +		write_lock_irqsave(&rt_list_lock, flag);
